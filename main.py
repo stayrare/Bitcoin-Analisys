@@ -12,6 +12,7 @@ from pyspark.sql.functions import col, from_unixtime, to_timestamp, year, month,
 from pyspark.sql.window import Window
 import numpy as np
 from pyspark import StorageLevel
+import matplotlib.pyplot as plt
 
 # Инициализация Spark сессии с оптимизациями для больших данных
 # Для работы с HDFS, измените 'file:///' на 'hdfs://<namenode>:<port>'
@@ -414,6 +415,65 @@ def print_summary_results(yearly_stats, monthly_stats, daily_stats, yearly_vol, 
 
     print("\n=== КОНЕЦ ОТЧЕТА ===")
 
+def plot_technical_indicators(df):
+    """Визуализация технических индикаторов: полосы Боллинджера, MACD, RSI за последний год"""
+    try:
+        os.makedirs("analysis_results/plots", exist_ok=True)
+        # Определяем последний год в данных
+        last_year = df.select(max("Year")).collect()[0][0]
+        # Фильтруем данные за последний год
+        df_last_year = df.filter(col("Year") == last_year)
+        df_pd = df_last_year.orderBy(col("Date")).toPandas()
+        df_pd = df_pd.set_index('Date')
+
+        # 1. Полосы Боллинджера
+        plt.figure(figsize=(15, 7))
+        plt.plot(df_pd.index, df_pd['Close'], label='Цена Close', color='blue')
+        plt.plot(df_pd.index, df_pd['UpperBand'], label='Верхняя полоса Боллинджера', color='red', linestyle='--')
+        plt.plot(df_pd.index, df_pd['LowerBand'], label='Нижняя полоса Боллинджера', color='green', linestyle='--')
+        plt.plot(df_pd.index, df_pd['MA20'], label='MA 20', color='orange', linestyle=':')
+        plt.title('Цена Bitcoin с Полосами Боллинджера (за последний год)')
+        plt.xlabel('Дата')
+        plt.ylabel('Цена')
+        plt.legend()
+        plt.grid(True)
+        plt.tight_layout()
+        plt.savefig('analysis_results/plots/bollinger_bands.png')
+        plt.close()
+
+        # 2. MACD
+        plt.figure(figsize=(15, 7))
+        plt.plot(df_pd.index, df_pd['MACD'], label='MACD', color='blue')
+        plt.plot(df_pd.index, df_pd['SignalLine'], label='Сигнальная линия', color='red', linestyle='--')
+        plt.bar(df_pd.index, df_pd['MACD_Hist'], label='Гистограмма', color='gray', alpha=0.5)
+        plt.title('Индикатор MACD (за последний год)')
+        plt.xlabel('Дата')
+        plt.ylabel('Значение')
+        plt.legend()
+        plt.grid(True)
+        plt.tight_layout()
+        plt.savefig('analysis_results/plots/macd.png')
+        plt.close()
+
+        # 3. RSI
+        plt.figure(figsize=(15, 7))
+        plt.plot(df_pd.index, df_pd['RSI14'], label='RSI 14', color='purple')
+        plt.axhline(70, linestyle='--', color='red', label='Перекупленность (70)')
+        plt.axhline(30, linestyle='--', color='green', label='Перепроданность (30)')
+        plt.title('Индикатор RSI (за последний год)')
+        plt.xlabel('Дата')
+        plt.ylabel('Значение RSI')
+        plt.legend()
+        plt.grid(True)
+        plt.tight_layout()
+        plt.savefig('analysis_results/plots/rsi.png')
+        plt.close()
+
+        print("Графики технических индикаторов за последний год сохранены в analysis_results/plots/")
+    except Exception as e:
+        print(f"Ошибка при построении графиков технических индикаторов: {str(e)}")
+        raise
+
 def main():
     """Основная функция"""
     try:
@@ -444,6 +504,9 @@ def main():
         # Сохранение результатов
         save_analysis_results(df, yearly_stats, monthly_stats, daily_stats,
                             yearly_vol, vol_stats, volume_price_corr, volume_by_day)
+        
+        # Визуализация технических индикаторов
+        plot_technical_indicators(df)
         
         # Вывод итоговых результатов
         print_summary_results(yearly_stats, monthly_stats, daily_stats,
