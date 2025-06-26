@@ -10,13 +10,11 @@ logging.getLogger("com.github.fommil.netlib").setLevel(logging.ERROR)
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import col, from_unixtime, to_timestamp, year, month, dayofmonth, log, avg, count, min, max, when, lit, date_add, lag, hour, dayofweek, stddev, corr, percentile_approx, sum, expr
 from pyspark.sql.window import Window
-import matplotlib.pyplot as plt
-import pandas as pd
 import numpy as np
 from pyspark import StorageLevel
-import seaborn as sns
 
 # Инициализация Spark сессии с оптимизациями для больших данных
+# Для работы с HDFS, измените 'file:///' на 'hdfs://<namenode>:<port>'
 spark = SparkSession.builder \
     .appName("BitcoinMarketAnalysis") \
     .config("spark.driver.memory", "8g") \
@@ -27,6 +25,7 @@ spark = SparkSession.builder \
     .config("spark.sql.parquet.mergeSchema", "true") \
     .config("spark.sql.shuffle.partitions", "200") \
     .config("spark.default.parallelism", "200") \
+    .config("spark.hadoop.mapreduce.fileoutputcommitter.algorithm.version", "2") \
     .config("spark.hadoop.fs.defaultFS", "file:///") \
     .getOrCreate()
 
@@ -254,192 +253,61 @@ def validate_data(df):
     
     return df_cleaned
 
-def visualize_results(df, yearly_stats, monthly_stats, daily_stats, yearly_vol):
-    """Визуализация результатов анализа"""
-    try:
-        # Создаем директорию для графиков, если она не существует
-        os.makedirs("analysis_results/plots", exist_ok=True)
-        
-        print("\nНачинаем создание визуализаций...")
-        
-        # Преобразование в pandas для визуализации
-        print("Преобразование данных в pandas...")
-        yearly_stats_pd = yearly_stats.toPandas()
-        monthly_stats_pd = monthly_stats.toPandas()
-        daily_stats_pd = daily_stats.toPandas()
-        yearly_vol_pd = yearly_vol.toPandas()
-        volume_by_day_pd = df.groupBy("DayOfWeek").agg(avg("Volume").alias("avg_volume")).orderBy("DayOfWeek").toPandas()
-        
-        # Для детальных графиков возьмем данные за последний год
-        print("Подготовка данных для детальных графиков (последний год)...")
-        last_year = df.select(max("Year")).collect()[0][0]
-        df_last_year_pd = df.filter(col("Year") == last_year).toPandas()
-        df_last_year_pd = df_last_year_pd.sort_values('Date').set_index('Date')
-        
-        # Создание основных графиков
-        print("Создание основных графиков...")
-        plt.figure(figsize=(15, 12))
-        
-        # 1. Годовые тренды
-        plt.subplot(2, 2, 1)
-        plt.plot(yearly_stats_pd['Year'], yearly_stats_pd['avg_price'])
-        plt.title('Годовые тренды цены')
-        plt.xlabel('Год')
-        plt.ylabel('Средняя цена')
-        plt.grid(True)
-        
-        # 2. Месячные паттерны
-        plt.subplot(2, 2, 2)
-        plt.bar(monthly_stats_pd['Month'], monthly_stats_pd['avg_price'])
-        plt.title('Месячные паттерны цены')
-        plt.xlabel('Месяц')
-        plt.ylabel('Средняя цена')
-        plt.grid(True)
-        
-        # 3. Волатильность по годам
-        plt.subplot(2, 2, 3)
-        plt.plot(yearly_vol_pd['Year'], yearly_vol_pd['YearlyVolatility'])
-        plt.title('Годовая волатильность')
-        plt.xlabel('Год')
-        plt.ylabel('Волатильность (%)')
-        plt.grid(True)
-        
-        # 4. Объем по дням недели
-        plt.subplot(2, 2, 4)
-        plt.bar(volume_by_day_pd['DayOfWeek'], volume_by_day_pd['avg_volume'])
-        plt.title('Средний объем по дням недели')
-        plt.xlabel('День недели')
-        plt.ylabel('Средний объем')
-        plt.grid(True)
-        
-        plt.tight_layout()
-        
-        # Сохранение основного графика
-        print("Сохранение основного графика...")
-        plt.savefig('analysis_results/plots/bitcoin_analysis_main.png')
-        plt.close()
-        
-        # Дополнительные визуализации с техническими индикаторами
-        print("\nСоздание графиков с техническими индикаторами...")
-        
-        # 1. Цена с Полосами Боллинджера
-        plt.figure(figsize=(15, 7))
-        plt.plot(df_last_year_pd.index, df_last_year_pd['Close'], label='Цена Close', color='blue')
-        plt.plot(df_last_year_pd.index, df_last_year_pd['UpperBand'], label='Верхняя полоса Боллинджера', color='red', linestyle='--')
-        plt.plot(df_last_year_pd.index, df_last_year_pd['LowerBand'], label='Нижняя полоса Боллинджера', color='green', linestyle='--')
-        plt.plot(df_last_year_pd.index, df_last_year_pd['MA20'], label='MA 20', color='orange', linestyle=':')
-        plt.title('Цена Bitcoin с Полосами Боллинджера (за последний год)')
-        plt.xlabel('Дата')
-        plt.ylabel('Цена')
-        plt.legend()
-        plt.grid(True)
-        plt.savefig('analysis_results/plots/bollinger_bands.png')
-        plt.close()
-
-        # 2. MACD индикатор
-        plt.figure(figsize=(15, 7))
-        plt.plot(df_last_year_pd.index, df_last_year_pd['MACD'], label='MACD', color='blue')
-        plt.plot(df_last_year_pd.index, df_last_year_pd['SignalLine'], label='Сигнальная линия', color='red', linestyle='--')
-        plt.bar(df_last_year_pd.index, df_last_year_pd['MACD_Hist'], label='Гистограмма', color='gray', alpha=0.5)
-        plt.title('Индикатор MACD (за последний год)')
-        plt.xlabel('Дата')
-        plt.ylabel('Значение')
-        plt.legend()
-        plt.grid(True)
-        plt.savefig('analysis_results/plots/macd.png')
-        plt.close()
-
-        # 3. RSI индикатор
-        plt.figure(figsize=(15, 7))
-        plt.plot(df_last_year_pd.index, df_last_year_pd['RSI14'], label='RSI 14', color='purple')
-        plt.axhline(70, linestyle='--', color='red', label='Перекупленность (70)')
-        plt.axhline(30, linestyle='--', color='green', label='Перепроданность (30)')
-        plt.title('Индикатор RSI (за последний год)')
-        plt.xlabel('Дата')
-        plt.ylabel('Значение RSI')
-        plt.legend()
-        plt.grid(True)
-        plt.savefig('analysis_results/plots/rsi.png')
-        plt.close()
-
-        # 4. Корреляционная матрица
-        corr_matrix = pd.DataFrame({
-            'Цена': yearly_stats_pd['avg_price'],
-            'Объем': yearly_stats_pd['avg_volume'],
-            'Волатильность': yearly_vol_pd['YearlyVolatility']
-        }).corr()
-        
-        plt.figure(figsize=(8, 6))
-        sns.heatmap(corr_matrix, annot=True, cmap='coolwarm', fmt='.2f')
-        plt.title('Корреляционная матрица (годовые данные)')
-        plt.savefig('analysis_results/plots/correlation_matrix.png')
-        plt.close()
-        
-        # Проверка создания файлов
-        print("\nПроверка созданных графиков:")
-        for filename in ['bitcoin_analysis_main.png', 'bollinger_bands.png', 'macd.png', 'rsi.png', 'correlation_matrix.png']:
-            filepath = f"analysis_results/plots/{filename}"
-            if os.path.exists(filepath):
-                size = os.path.getsize(filepath)
-                print(f"- {filename}: {size} байт")
-            else:
-                print(f"ОШИБКА: График {filename} не был сохранен!")
-        
-    except Exception as e:
-        print(f"\nОШИБКА при создании визуализаций: {str(e)}")
-        raise e
-
 def save_analysis_results(df, yearly_stats, monthly_stats, daily_stats, yearly_vol, vol_stats, volume_price_corr, volume_by_day):
-    """Сохранение результатов анализа"""
+    """Сохранение результатов анализа в формате Parquet для использования в BI-системах."""
     try:
         # Создаем директорию для результатов, если она не существует
-        os.makedirs("analysis_results/data", exist_ok=True)
+        output_dir = "analysis_results/data_parquet"
+        os.makedirs(output_dir, exist_ok=True)
         
-        print("\nНачинаем сохранение результатов анализа...")
+        print("\nНачинаем сохранение результатов анализа в формате Parquet...")
         
-        # Функция для сохранения DataFrame в CSV
-        def save_to_csv(pdf, filename):
-            # Сохраняем в CSV
-            filepath = f"analysis_results/data/{filename}.csv"
-            pdf.to_csv(filepath, index=False)
-            print(f"Сохранен файл: {filename}.csv")
+        # Функция для сохранения DataFrame в Parquet
+        def save_to_parquet(sdf, filename):
+            # Сохраняем в Parquet
+            filepath = os.path.join(output_dir, filename)
+            # Используем coalesce(1) чтобы сохранить результат в один файл для удобства
+            sdf.coalesce(1).write.mode("overwrite").parquet(filepath)
+            print(f"Сохранены данные: {filepath}")
         
         # Сохранение всех результатов
         print("Сохранение годовой статистики...")
-        save_to_csv(yearly_stats.toPandas(), "yearly_stats")
+        save_to_parquet(yearly_stats, "yearly_stats")
         
         print("Сохранение месячной статистики...")
-        save_to_csv(monthly_stats.toPandas(), "monthly_stats")
+        save_to_parquet(monthly_stats, "monthly_stats")
         
         print("Сохранение дневной статистики...")
-        save_to_csv(daily_stats.toPandas(), "daily_stats")
+        save_to_parquet(daily_stats, "daily_stats")
         
         print("Сохранение годовой волатильности...")
-        save_to_csv(yearly_vol.toPandas(), "yearly_volatility")
+        save_to_parquet(yearly_vol, "yearly_volatility")
         
         print("Сохранение объемов по дням...")
-        save_to_csv(volume_by_day.toPandas(), "volume_by_day")
+        save_to_parquet(volume_by_day, "volume_by_day")
         
         print("Сохранение корреляций...")
-        save_to_csv(volume_price_corr.toPandas(), "volume_price_correlation")
+        save_to_parquet(volume_price_corr, "volume_price_correlation")
         
         # Сохранение последних 1000 записей с тех. индикаторами
         print("Сохранение последних 1000 записей с индикаторами...")
-        df_with_indicators_pd = df.orderBy(col("Date").desc()).limit(1000).toPandas()
-        save_to_csv(df_with_indicators_pd, "latest_data_with_indicators")
+        df_with_indicators = df.orderBy(col("Date").desc()).limit(1000)
+        save_to_parquet(df_with_indicators, "latest_data_with_indicators")
 
-        # Проверяем, что файлы созданы
-        print("\nПроверка созданных файлов:")
-        for filename in ["yearly_stats", "monthly_stats", "daily_stats", 
+        # Проверяем, что директории созданы
+        print("\nПроверка созданных директорий:")
+        for dirname in ["yearly_stats", "monthly_stats", "daily_stats", 
                         "yearly_volatility", "volume_by_day", "volume_price_correlation", "latest_data_with_indicators"]:
-            filepath = f"analysis_results/data/{filename}.csv"
-            if os.path.exists(filepath):
-                size = os.path.getsize(filepath)
-                print(f"- {filename}.csv: {size} байт")
+            dirpath = os.path.join(output_dir, dirname)
+            if os.path.isdir(dirpath):
+                if len(os.listdir(dirpath)) > 0:
+                    print(f"- {dirname}: OK")
+                else:
+                    print(f"ПРЕДУПРЕЖДЕНИЕ: Директория {dirname} пуста!")
             else:
-                print(f"ОШИБКА: Файл {filename}.csv не создан!")
+                print(f"ОШИБКА: Директория {dirname} не создана!")
         
-        print("\nРезультаты сохранены в директории 'analysis_results/data'")
+        print(f"\nРезультаты сохранены в директории '{output_dir}'. Эти файлы можно импортировать в Power BI или другие BI-инструменты.")
         
     except Exception as e:
         print(f"\nОШИБКА при сохранении результатов: {str(e)}")
@@ -448,13 +316,6 @@ def save_analysis_results(df, yearly_stats, monthly_stats, daily_stats, yearly_v
 def print_summary_results(yearly_stats, monthly_stats, daily_stats, yearly_vol, vol_stats, volume_price_corr, volume_by_day, volume_stats, df):
     """Вывод кратких результатов анализа в консоль"""
     print("\n=== КРАТКИЕ РЕЗУЛЬТАТЫ АНАЛИЗА ===")
-    
-    # Преобразуем в pandas для удобства вывода
-    yearly_stats_pd = yearly_stats.toPandas()
-    monthly_stats_pd = monthly_stats.toPandas()
-    daily_stats_pd = daily_stats.toPandas()
-    yearly_vol_pd = yearly_vol.toPandas()
-    volume_by_day_pd = volume_by_day.toPandas()
     
     # Словари для преобразования числовых значений в названия
     month_names = {
@@ -470,55 +331,86 @@ def print_summary_results(yearly_stats, monthly_stats, daily_stats, yearly_vol, 
     
     # Годовые тренды
     print("\nГодовые тренды:")
-    print(f"Средняя цена за последний год: ${yearly_stats_pd['avg_price'].iloc[-1]:,.2f}")
-    print(f"Максимальная цена за все время: ${yearly_stats_pd['max_price'].max():,.2f}")
-    print(f"Минимальная цена за все время: ${yearly_stats_pd['min_price'].min():,.2f}")
+    yearly_stats_collected = yearly_stats.orderBy("Year").collect()
+    if yearly_stats_collected:
+        print(f"Средняя цена за последний год: ${yearly_stats_collected[-1]['avg_price']:,.2f}")
+        
+        # Рассчитываем общие мин/макс через Spark, чтобы избежать коллизии имен с Python-функциями
+        overall_price_stats = yearly_stats.agg(
+            max("max_price").alias("overall_max"),
+            min("min_price").alias("overall_min")
+        ).first()
+        
+        if overall_price_stats:
+            print(f"Максимальная цена за все время: ${overall_price_stats['overall_max']:,.2f}")
+            print(f"Минимальная цена за все время: ${overall_price_stats['overall_min']:,.2f}")
     
     # Месячные паттерны
     print("\nМесячные паттерны:")
-    best_month = monthly_stats_pd.loc[monthly_stats_pd['avg_price'].idxmax()]
-    worst_month = monthly_stats_pd.loc[monthly_stats_pd['avg_price'].idxmin()]
-    print(f"Лучший месяц для торговли: {month_names[int(best_month['Month'])]} (средняя цена: ${best_month['avg_price']:,.2f})")
-    print(f"Худший месяц для торговли: {month_names[int(worst_month['Month'])]} (средняя цена: ${worst_month['avg_price']:,.2f})")
+    best_month_row = monthly_stats.orderBy(col("avg_price").desc()).first()
+    worst_month_row = monthly_stats.orderBy(col("avg_price").asc()).first()
+    if best_month_row and worst_month_row:
+        print(f"Лучший месяц для торговли: {month_names.get(best_month_row['Month'], 'N/A')} (средняя цена: ${best_month_row['avg_price']:,.2f})")
+        print(f"Худший месяц для торговли: {month_names.get(worst_month_row['Month'], 'N/A')} (средняя цена: ${worst_month_row['avg_price']:,.2f})")
     
     # Волатильность
     print("\nВолатильность:")
-    print(f"Средняя годовая волатильность: {yearly_vol_pd['YearlyVolatility'].mean():.2f}%")
-    print(f"Максимальная годовая волатильность: {yearly_vol_pd['YearlyVolatility'].max():.2f}%")
-    
+    volatility_agg = yearly_vol.agg(
+        avg("YearlyVolatility").alias("avg_vol"),
+        max("YearlyVolatility").alias("max_vol")
+    ).first()
+    if volatility_agg:
+        print(f"Средняя годовая волатильность: {volatility_agg['avg_vol']:.2f}%")
+        print(f"Максимальная годовая волатильность: {volatility_agg['max_vol']:.2f}%")
+
     # Объемы
-    print("\nОбъемы торгов (без нулевых значений):")
-    print(f"Минимальный объем: {volume_stats['min_volume']:,.0f}")
-    print(f"Максимальный объем: {volume_stats['max_volume']:,.0f}")
-    print(f"Средний объем: {volume_stats['avg_volume']:,.0f}")
-    print(f"Медианный объем: {volume_stats['median_volume']:,.0f}")
-    print(f"Общий объем торгов: {volume_stats['total_volume']:,.0f}")
+    if volume_stats:
+        print("\nОбъемы торгов (без нулевых значений):")
+        print(f"Минимальный объем: {volume_stats['min_volume']:,.0f}")
+        print(f"Максимальный объем: {volume_stats['max_volume']:,.0f}")
+        print(f"Средний объем: {volume_stats['avg_volume']:,.0f}")
+        print(f"Медианный объем: {volume_stats['median_volume']:,.0f}")
+        print(f"Общий объем торгов: {volume_stats['total_volume']:,.0f}")
     
     # Объемы по дням недели
     print("\nОбъемы по дням недели:")
-    for _, row in volume_by_day_pd.iterrows():
-        day_name = day_names[int(row['DayOfWeek'])]
+    volume_by_day_collected = volume_by_day.orderBy("DayOfWeek").collect()
+    for row in volume_by_day_collected:
+        day_name = day_names.get(row['DayOfWeek'], 'N/A')
         print(f"{day_name}:")
-        print(f"  Количество записей: {row['count']}")
+        print(f"  Количество записей: {row['count']:,}")
         print(f"  Медианный объем: {row['median_volume']:,.0f}")
         print(f"  Средний объем: {row['avg_volume']:,.0f}")
         print(f"  Общий объем: {row['total_volume']:,.0f}")
     
     # Корреляции
     print("\nКорреляции:")
-    print(f"Корреляция объема с ценой: {volume_price_corr.toPandas()['correlation'].iloc[0]:.2f}")
+    corr_value = volume_price_corr.first()
+    if corr_value:
+        print(f"Корреляция объема с ценой: {corr_value['correlation']:.2f}")
     
     print("\n--- Последние значения технических индикаторов ---")
     latest_record = df.orderBy(col("Date").desc()).first()
     if latest_record:
         print(f"Дата последней записи: {latest_record['Date']}")
         print(f"Последняя цена Close: ${latest_record['Close']:,.2f}")
-        print(f"RSI(14): {latest_record['RSI14']:.2f}")
-        print(f"MACD: {latest_record['MACD']:.2f} (Сигнальная линия: {latest_record['SignalLine']:.2f})")
+        
+        # Функция для безопасного форматирования
+        def format_indicator(value, is_price=False):
+            if value is not None and isinstance(value, (int, float)):
+                prefix = "$" if is_price else ""
+                return f"{prefix}{value:,.2f}"
+            return "N/A"
+
+        # Преобразуем Row в dict для безопасного использования .get()
+        latest_record_dict = latest_record.asDict()
+
+        print(f"RSI(14): {format_indicator(latest_record_dict.get('RSI14'))}")
+        print(f"MACD: {format_indicator(latest_record_dict.get('MACD'))} (Сигнальная линия: {format_indicator(latest_record_dict.get('SignalLine'))})")
         print(f"Полосы Боллинджера (20):")
-        print(f"  Верхняя: ${latest_record['UpperBand']:,.2f}")
-        print(f"  Средняя (MA20): ${latest_record['MA20']:,.2f}")
-        print(f"  Нижняя: ${latest_record['LowerBand']:,.2f}")
+        print(f"  Верхняя: {format_indicator(latest_record_dict.get('UpperBand'), is_price=True)}")
+        print(f"  Средняя (MA20): {format_indicator(latest_record_dict.get('MA20'), is_price=True)}")
+        print(f"  Нижняя: {format_indicator(latest_record_dict.get('LowerBand'), is_price=True)}")
 
     print("\n=== КОНЕЦ ОТЧЕТА ===")
 
@@ -548,10 +440,6 @@ def main():
         
         # Анализ объемов
         volume_price_corr, volume_by_day, volume_stats = analyze_volumes(df)
-        
-        # Визуализация результатов
-        visualize_results(df, yearly_stats, monthly_stats, daily_stats, 
-                         yearly_vol)
         
         # Сохранение результатов
         save_analysis_results(df, yearly_stats, monthly_stats, daily_stats,
