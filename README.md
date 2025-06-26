@@ -19,7 +19,6 @@ Big Data Samsung Innovation Campus project
 
 - Python 3.8+
 - PySpark
-- pandas
 - matplotlib
 - numpy
 
