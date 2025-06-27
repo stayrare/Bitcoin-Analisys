@@ -15,7 +15,6 @@ from pyspark import StorageLevel
 import matplotlib.pyplot as plt
 
 # Инициализация Spark сессии с оптимизациями для больших данных
-# Для работы с HDFS, измените 'file:///' на 'hdfs://<namenode>:<port>'
 spark = SparkSession.builder \
     .appName("BitcoinMarketAnalysis") \
     .config("spark.driver.memory", "8g") \
